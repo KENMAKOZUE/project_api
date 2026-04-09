@@ -9,9 +9,9 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, nullable=False)
-    first_name = Column(String, nullable=False)
-    last_name = Column(String, nullable=False)
+    email = Column(String, nullable=False, unique=True, index=True)
+    first_name = Column(String, nullable=True, default="")
+    last_name = Column(String, nullable=True, default="")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     password = Column(String, nullable=False)

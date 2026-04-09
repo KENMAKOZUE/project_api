@@ -1,14 +1,12 @@
-from datetime import datetime
-from typing import List
+import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from authx import AuthX, AuthXConfig, TokenPayload
 
 from src.database import get_db
 from src.auth.models import User
-from src.auth.schemas import UserRegisterSchema
+from src.auth.schemas import UserRegisterSchema, UserLoginSchema, TokenResponseSchema
 
 
 config = AuthXConfig(
@@ -17,7 +15,6 @@ config = AuthXConfig(
 )
 
 auth = AuthX(config=config)
-security = HTTPBearer()
 
 user_router = APIRouter(
     prefix="/users",
@@ -25,60 +22,69 @@ user_router = APIRouter(
 )
 
 
-@user_router.post("/register", status_code=status.HTTP_201_CREATED)
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def _token_pair(subject: str) -> dict[str, str]:
+    return {
+        "access_token": auth.create_access_token(uid=subject),
+        "refresh_token": auth.create_refresh_token(uid=subject),
+        "token_type": "bearer",
+    }
+
+
+@user_router.post("/register", response_model=TokenResponseSchema, status_code=status.HTTP_201_CREATED)
 def create_user(
-    user_data: UserRegisterSchema,    
+    user_data: UserRegisterSchema,
     db: Session = Depends(get_db)
 ):
     existing_user = db.query(User).filter(User.email == user_data.email).first()
     if existing_user:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Пользователь с таким email уже существует"
         )
 
     new_user = User(
         email=user_data.email,
-        password=user_data.password,   
-        first_name="",          
+        password=_hash_password(user_data.password),
+        first_name="",
         last_name=""
     )
 
     db.add(new_user)
     db.commit()
-    db.refresh(new_user)              
+    db.refresh(new_user)
 
-    access_token = auth.create_access_token(uid=new_user.email)
+    return _token_pair(new_user.email)
 
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "message": "Регистрация прошла успешно"
-    }
 
-@user_router.post("/login")
+@user_router.post("/login", response_model=TokenResponseSchema)
 def login(
-    email: str,          
-    password: str,
+    credentials: UserLoginSchema,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(User).filter(User.email == credentials.email).first()
 
-    if not user or user.password != password:
+    if not user or user.password != _hash_password(credentials.password):
         raise HTTPException(
-            status_code=401,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверный email или пароль"
         )
 
-    access_token = auth.create_access_token(uid=user.email)
+    return _token_pair(user.email)
 
-    return {
-        "access_token": access_token,
-        "token_type": "bearer"
-    }
+
+@user_router.post("/refresh", response_model=TokenResponseSchema)
+def refresh_token(
+    payload: TokenPayload = Depends(auth.refresh_token_required)
+):
+    return _token_pair(payload.sub)
 
 
 @user_router.get("/protected")
-def protected(payload: TokenPayload = Depends(auth.access_token_required),
-              credentials = Depends(security)):
+def protected(
+    payload: TokenPayload = Depends(auth.access_token_required)
+):
     return {"message": payload.sub}
