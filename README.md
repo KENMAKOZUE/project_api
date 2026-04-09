@@ -23,3 +23,4 @@ http://127.0.0.1:8000/docs
 
 > Токен передаётся в заголовке `Authorization: Bearer <token>`.
 # project_api
+# project_api
